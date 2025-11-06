@@ -1,0 +1,16 @@
+# Abaikan folder dependensi
+/backend/node_modules/
+/frontend/node_modules/
+
+# Abaikan file environment (yang berisi password/kunci API)
+.env
+/backend/.env
+/frontend/.env
+
+# Abaikan file log
+*.log
+npm-debug.log*
+
+# Abaikan file sistem operasi
+.DS_Store
+Thumbs.db
