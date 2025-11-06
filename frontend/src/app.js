@@ -1,3 +1,4 @@
+import StatistikPage from './StatistikPage.jsx';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   Search, Plus, Edit2, Trash2, Download, Save, X, Users, FileText, LogOut, 
