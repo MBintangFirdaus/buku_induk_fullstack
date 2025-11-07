@@ -1120,47 +1120,7 @@ export default function App() {
           )}
 
           {activeMenu === 'statistik' && (
-            <div className="space-y-6">
-              <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-2xl shadow-lg`}>
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>Statistik Siswa per Kejuruan</h2>
-                  <TrendingUp className={`w-6 h-6 ${darkMode ? 'text-gray-400' : 'text-indigo-600'}`} />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {uniqueKejuruan.map(kejuruan => {
-                    const kejuruanStudents = students.filter(s => s.kejuruan === kejuruan);
-                    const total = kejuruanStudents.length;
-                    const aktif = kejuruanStudents.filter(s => s.status === 'Aktif').length;
-                    const lulus = kejuruanStudents.filter(s => s.status === 'Lulus').length;
-                    const tidakAktif = kejuruanStudents.filter(s => s.status === 'Tidak Aktif' || s.status === 'Mengundurkan Diri').length;
-                    
-                    return (
-                      <div key={kejuruan} className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} p-5 rounded-xl border-2 ${darkMode ? 'border-gray-600' : 'border-gray-200'}`}>
-                        <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>{kejuruan}</h3>
-                        <div className="space-y-3">
-                          <div className="flex justify-between items-center">
-                            <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Total</span>
-                            <span className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{total}</span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Aktif</span>
-                            <span className="font-semibold text-green-600">{aktif}</span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Lulus</span>
-                            <span className="font-semibold text-blue-600">{lulus}</span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Tidak Aktif</span>
-                            <span className="font-semibold text-red-600">{tidakAktif}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+            <StatistikPage students={students} darkMode={darkMode} />
           )}
 
           {activeMenu === 'pengaturan' && (
