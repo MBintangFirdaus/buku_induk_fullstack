@@ -122,7 +122,7 @@ router.put('/:id', async (req, res) => {
                  no_induk = ?, nik = ?, no_hp = ?, email = ?, keterangan = ?, 
                  fisik = ?, tb_bb = ?, updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?`;
-    
+
     const values = [
       nama, ttl, jenis_kelamin, alamat, pendidikan, kejuruan, 
       tahun_masuk, status, no_induk, nik, no_hp, email, keterangan,
@@ -131,31 +131,31 @@ router.put('/:id', async (req, res) => {
 
     const [result] = await db.query(sql, values);
     console.log('✅ Update result:', result);
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ 
         success: false,
         message: 'Student not found' 
       });
     }
-    
+
     // Ambil data terupdate
     const [updatedStudent] = await db.query(
       'SELECT * FROM students WHERE id = ?', 
       [id]
     );
-    
+
     console.log('✅ Student updated successfully:', updatedStudent[0]);
-    
+
     if (req.app.get('io')) {
       req.app.get('io').emit('studentUpdated', updatedStudent[0]);
     }
-    
+
     res.json({
       success: true,
       data: updatedStudent[0]
     });
-    
+
   } catch (err) {
     console.error('❌ Error updating student:', err);
     res.status(500).json({ 
