@@ -6,7 +6,12 @@ import {
   Briefcase, Clock, Award, TrendingUp, ChevronLeft, ChevronRight, AlertTriangle,
   Eye, EyeOff, Upload, UserCheck, Filter, Calendar
 } from 'lucide-react';
-import { studentAPI, authAPI, socket } from './services/api';
+// --- PERUBAHAN 1: Impor logAPI ---
+import { studentAPI, authAPI, socket, logAPI } from './services/api';
+
+// BARU: Tentukan BASE_URL backend Anda di sini
+// Ini penting agar gambar bisa dimuat
+const BASE_URL = 'http://localhost:5000'; 
 
 // Komponen Loading
 const LoadingSpinner = ({ size = 'md' }) => {
@@ -25,6 +30,7 @@ const LoadingSpinner = ({ size = 'md' }) => {
 
 // Komponen Pagination
 const Pagination = ({ currentPage, totalPages, onPageChange, darkMode }) => {
+  // ... (Kode pagination Anda tidak berubah) ...
   const pages = [];
   const maxVisiblePages = 5;
   
@@ -95,6 +101,7 @@ const Pagination = ({ currentPage, totalPages, onPageChange, darkMode }) => {
 
 // Komponen Confirm Modal
 const ConfirmModal = ({ isOpen, onClose, onConfirm, title, message, type = 'delete', loading }) => {
+  // ... (Kode ConfirmModal Anda tidak berubah) ...
   if (!isOpen) return null;
 
   const buttonStyles = {
@@ -104,7 +111,8 @@ const ConfirmModal = ({ isOpen, onClose, onConfirm, title, message, type = 'dele
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    //  👇 PERUBAHAN DI SINI: z-50 diubah menjadi z-[60]
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]">
       <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md">
         <div className="p-6">
           <div className="flex items-center gap-3 mb-4">
@@ -174,6 +182,13 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
+  // State untuk modal "Lihat Data Siswa"
+  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+  const [viewedStudent, setViewedStudent] = useState(null);
+
+  // State untuk file foto yang dipilih
+  const [selectedFile, setSelectedFile] = useState(null);
+
   const [formData, setFormData] = useState({
     nama: '',
     ttl: '',
@@ -193,67 +208,117 @@ export default function App() {
   });
 
   const [formErrors, setFormErrors] = useState({});
+  
+  // --- PERUBAHAN 2: State baru untuk Activity Log ---
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   useEffect(() => {
-  const token = localStorage.getItem('token');
-  const savedUser = localStorage.getItem('user');
-  if (token && savedUser) {
-    setUser(JSON.parse(savedUser));
-    setIsLoginOpen(false);
-    loadStudents();
-    connectSocket();
-  }
+    const token = localStorage.getItem('token');
+    const savedUser = localStorage.getItem('user');
+    if (token && savedUser) {
+      setUser(JSON.parse(savedUser));
+      setIsLoginOpen(false);
+      loadStudents();
+      connectSocket();
+    }
 
-  // Cleanup function untuk mencegah duplicate listeners
-  return () => {
+    // Cleanup function untuk mencegah duplicate listeners
+    return () => {
+      socket.off('studentCreated');
+      socket.off('studentUpdated');
+      socket.off('studentDeleted');
+    };
+  }, []);
+  
+  // --- PERUBAHAN 3: useEffect baru untuk memuat log saat tab Pengaturan aktif ---
+  useEffect(() => {
+    if (activeMenu === 'pengaturan' && user) {
+      loadLogs();
+    }
+  }, [activeMenu, user]); // Akan dipanggil setiap kali activeMenu atau user berubah
+
+  // Di dalam file app.js
+
+  const connectSocket = () => {
+    // ... (Kode connectSocket Anda tidak berubah) ...
+    socket.connect();
+    
     socket.off('studentCreated');
     socket.off('studentUpdated');
     socket.off('studentDeleted');
-  };
-}, []);
-
-  const connectSocket = () => {
-  socket.connect();
-  
-  // Hapus existing listeners terlebih dahulu untuk prevent duplicates
-  socket.off('studentCreated');
-  socket.off('studentUpdated');
-  socket.off('studentDeleted');
-  
-  socket.on('studentCreated', (student) => {
-    console.log('Student created:', student); // Debug log
-    setStudents(prev => {
-      // Cek apakah student sudah ada untuk prevent duplicates
-      const exists = prev.find(s => s.id === student.id);
-      if (exists) return prev;
-      return [student, ...prev];
+    
+    socket.on('studentCreated', (student) => {
+      console.log('Socket: Student created:', student);
+      setStudents(prev => {
+        const exists = prev.find(s => s.id === student.id);
+        if (exists) return prev;
+        return [student, ...prev];
+      });
     });
-  });
-  
-  socket.on('studentUpdated', (student) => {
-    console.log('Student updated:', student); // Debug log
-    setStudents(prev => prev.map(s => s.id === student.id ? student : s));
-  });
-  
-  socket.on('studentDeleted', ({ id }) => {
-    console.log('Student deleted:', id); // Debug log
-    setStudents(prev => prev.filter(s => s.id !== id));
-  });
-};
+    
+    socket.on('studentUpdated', (updatedStudent) => {
+      console.log('Socket: Student updated:', updatedStudent);
+      
+      setStudents(prev => {
+        const index = prev.findIndex(s => s.id === updatedStudent.id);
+        if (index === -1) {
+          return prev; 
+        }
+        
+        const existingStudent = prev[index];
+        
+        if (new Date(updatedStudent.updated_at) < new Date(existingStudent.updated_at)) {
+          console.log('Socket: Stale update event ignored.');
+          return prev;
+        }
+        
+        const newList = [...prev];
+        newList[index] = updatedStudent;
+        return newList;
+      });
+
+      if (isViewModalOpen && viewedStudent && viewedStudent.id === updatedStudent.id) {
+        if (new Date(updatedStudent.updated_at) >= new Date(viewedStudent.updated_at)) {
+           setViewedStudent(updatedStudent);
+        }
+      }
+    });
+    
+    socket.on('studentDeleted', ({ id }) => {
+      console.log('Socket: Student deleted:', id);
+      setStudents(prev => prev.filter(s => s.id !== id));
+    });
+  };
 
   const loadStudents = async () => {
-  setLoading(true);
-  try {
-    const response = await studentAPI.getAll();
-    setStudents(response.data);
-  } catch (error) {
-    console.error('Error loading students:', error);
-    if (error.response?.status === 401) handleLogout();
-  } finally {
-    setLoading(false);
-  }
-};
-
+    setLoading(true);
+    try {
+      const response = await studentAPI.getAll();
+      setStudents(response.data);
+    } catch (error) {
+      console.error('Error loading students:', error);
+      if (error.response?.status === 401) handleLogout();
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // --- PERUBAHAN 4: Fungsi baru untuk memuat log aktivitas ---
+  const loadLogs = async () => {
+    setLogsLoading(true);
+    try {
+      const response = await logAPI.getAll();
+      setActivityLogs(response.data);
+    } catch (error) {
+      console.error('Gagal memuat log:', error);
+      showPopup('error', 'Gagal memuat riwayat aktivitas');
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+  
+  // ... (Kode handleLogin, handleLogout, handleInputChange, handleFileChange tidak berubah) ...
   const validateForm = () => {
     const errors = {};
     
@@ -316,72 +381,110 @@ export default function App() {
     }
   };
 
- const handleSubmit = async () => {
-  if (!validateForm()) {
-    showPopup('error', 'Terdapat kesalahan dalam form. Silakan periksa kembali.');
-    return;
-  }
-
-  setSubmitLoading(true);
-  try {
-    console.log('🟡 Submitting student data:', formData);
-    
-    let response;
-    if (editingStudent) {
-      console.log(`🟡 Updating student ID: ${editingStudent.id}`);
-      response = await studentAPI.update(editingStudent.id, formData);
+  const handleFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      setSelectedFile(e.target.files[0]);
     } else {
-      console.log('🟡 Creating new student');
-      response = await studentAPI.create(formData);
+      setSelectedFile(null);
     }
-    
-    console.log('✅ API Response:', response);
-    
-    // Handle response
-    if (response && response.data) {
-      const responseData = response.data;
+  };
+
+  const handleSubmit = async () => {
+    // ... (Kode handleSubmit Anda tidak berubah) ...
+    if (!validateForm()) {
+      showPopup('error', 'Terdapat kesalahan dalam form. Silakan periksa kembali.');
+      return;
+    }
+
+    setSubmitLoading(true);
+    try {
+      console.log('🟡 Submitting student data:', formData);
       
-      if (responseData.success === false) {
-        throw new Error(responseData.message || 'Gagal menyimpan data');
-      }
-      
-      const studentData = responseData.data || responseData;
-      
+      let finalStudentData;
+
       if (editingStudent) {
+        // --- LOGIKA EDIT ---
+        const textResponse = await studentAPI.update(editingStudent.id, formData);
+        finalStudentData = textResponse.data.data; 
+
+        if (selectedFile) {
+          console.log(`🟡 Uploading photo for student ID: ${editingStudent.id}`);
+          const photoFormData = new FormData();
+          photoFormData.append('foto_profil', selectedFile);
+
+          try {
+            const uploadResponse = await studentAPI.uploadFoto(editingStudent.id, photoFormData);
+            finalStudentData = uploadResponse.data.data;
+          } catch (uploadError) {
+            console.error('❌ Photo upload failed:', uploadError);
+            showPopup('warning', `Data siswa diperbarui, tapi upload foto gagal.`);
+          }
+        }
+        
+        setStudents(prev => prev.map(s => s.id === finalStudentData.id ? finalStudentData : s));
+        
+        if (isViewModalOpen && viewedStudent && viewedStudent.id === finalStudentData.id) {
+          setViewedStudent(finalStudentData);
+        }
+        
         showPopup('success', 'Data siswa berhasil diperbarui!');
-        setStudents(prev => 
-          prev.map(s => s.id === editingStudent.id ? studentData : s)
-        );
+
       } else {
+        // --- LOGIKA CREATE ---
+        const createResponse = await studentAPI.create(formData);
+        finalStudentData = createResponse.data.data;
+
+        if (selectedFile) {
+          console.log(`🟡 Uploading photo for new student ID: ${finalStudentData.id}`);
+          const photoFormData = new FormData();
+          photoFormData.append('foto_profil', selectedFile);
+          
+          try {
+            const uploadResponse = await studentAPI.uploadFoto(finalStudentData.id, photoFormData);
+            finalStudentData = uploadResponse.data.data;
+          } catch (uploadError) {
+            console.error('❌ Photo upload failed:', uploadError);
+            showPopup('warning', `Siswa dibuat, tapi upload foto gagal.`);
+          }
+        }
+        
+        setStudents(prev => {
+           const exists = prev.find(s => s.id === finalStudentData.id);
+           if (exists) {
+             return prev.map(s => s.id === finalStudentData.id ? finalStudentData : s);
+           }
+           return [finalStudentData, ...prev];
+        });
+        
+        if (isViewModalOpen && viewedStudent && viewedStudent.id === finalStudentData.id) {
+          setViewedStudent(finalStudentData);
+        }
+
         showPopup('success', 'Data siswa berhasil ditambahkan!');
-        setStudents(prev => [studentData, ...prev]);
       }
-      
+
       resetForm();
       setIsModalOpen(false);
       
-    } else {
-      throw new Error('Invalid response from server');
+    } catch (error) {
+      console.error('❌ Error in handleSubmit:', error);
+      
+      if (error.response) {
+        console.error('Response error:', error.response.data);
+      }
+      
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.message ||
+                          'Gagal menyimpan data';
+      
+      showPopup('error', `Error: ${errorMessage}`);
+    } finally {
+      setSubmitLoading(false);
     }
-    
-  } catch (error) {
-    console.error('❌ Error in handleSubmit:', error);
-    
-    if (error.response) {
-      console.error('Response error:', error.response.data);
-    }
-    
-    const errorMessage = error.response?.data?.message || 
-                        error.response?.data?.error || 
-                        error.message ||
-                        'Gagal menyimpan data';
-    
-    showPopup('error', `Error: ${errorMessage}`);
-  } finally {
-    setSubmitLoading(false);
-  }
-};
-
+  };
+  
+  // ... (Kode handleEdit, handleDelete, handleView, resetForm, showPopup, dll tidak berubah) ...
   const handleEdit = (student) => {
     setEditingStudent(student);
     setFormData({
@@ -416,6 +519,8 @@ export default function App() {
           await studentAPI.delete(id);
           showPopup('success', 'Data siswa berhasil dihapus!');
           setConfirmModal(prev => ({ ...prev, show: false }));
+          setIsModalOpen(false);
+          resetForm();
         } catch (error) {
           showPopup('error', error.response?.data?.message || 'Gagal menghapus data');
           setConfirmModal(prev => ({ ...prev, loading: false }));
@@ -423,6 +528,11 @@ export default function App() {
       },
       loading: false
     });
+  };
+
+  const handleView = (student) => {
+    setViewedStudent(student);
+    setIsViewModalOpen(true);
   };
 
   const resetForm = () => {
@@ -445,6 +555,7 @@ export default function App() {
     });
     setEditingStudent(null);
     setFormErrors({});
+    setSelectedFile(null);
   };
 
   const showPopup = (type, message) => {
@@ -452,7 +563,6 @@ export default function App() {
     setTimeout(() => setPopup({ show: false, type: '', message: '' }), 3000);
   };
 
-  // Function Reset Filter
   const handleResetFilters = () => {
     setShowResetConfirm(true);
   };
@@ -470,7 +580,6 @@ export default function App() {
     showPopup('success', 'Semua filter berhasil direset!');
   };
 
-  // Filter students dengan useMemo untuk optimasi
   const filteredStudents = useMemo(() => {
     return students.filter(s => {
       const matchesSearch = 
@@ -492,7 +601,6 @@ export default function App() {
     });
   }, [students, searchTerm, filters]);
 
-  // Pagination calculation
   const totalPages = Math.ceil(filteredStudents.length / itemsPerPage);
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
@@ -503,7 +611,7 @@ export default function App() {
 
   const handleFilterChange = useCallback((filterName, value) => {
     setFilters(prev => ({ ...prev, [filterName]: value }));
-    setCurrentPage(1); // Reset ke halaman pertama saat filter berubah
+    setCurrentPage(1);
   }, []);
 
   const toggleDarkMode = () => {
@@ -516,12 +624,13 @@ export default function App() {
     const headers = [
       'No', 'Nama', 'TTL', 'Alamat', 'No HP', 'No Induk',
       'Pendidikan', 'Jenis Kelamin', 'Fisik', 'TB/BB',
-      'Kejuruan', 'Tahun Masuk', 'Status', 'NIK', 'Email', 'Keterangan'
+      'Kejuruan', 'Tahun Masuk', 'Status', 'NIK', 'Email', 'Keterangan', 'Foto URL'
     ];
     const rows = filteredStudents.map((s, i) => [
       i + 1, s.nama, s.ttl, s.alamat, s.no_hp, s.no_induk,
       s.pendidikan, s.jenis_kelamin, s.fisik, s.tb_bb,
-      s.kejuruan, s.tahun_masuk, s.status, s.nik, s.email, s.keterangan
+      s.kejuruan, s.tahun_masuk, s.status, s.nik, s.email, s.keterangan,
+      s.foto_url ? `${BASE_URL}${s.foto_url}` : ''
     ]);
 
     let csv = headers.join(',') + '\n';
@@ -535,7 +644,8 @@ export default function App() {
   };
 
   const Popup = ({ type, message }) => (
-    <div className={`fixed top-6 right-6 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg text-white text-sm font-semibold transition-all duration-500 ${
+    //  👇 PERUBAHAN DI SINI: z-50 diubah menjadi z-[70]
+    <div className={`fixed top-6 right-6 z-[70] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg text-white text-sm font-semibold transition-all duration-500 ${
       type === 'success' ? 'bg-green-600' : 'bg-red-600'
     }`}>
       {type === 'success' ? <CheckCircle className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
@@ -543,7 +653,16 @@ export default function App() {
     </div>
   );
 
+  const DetailItem = ({ label, value }) => (
+    <div className="py-2 grid grid-cols-3 gap-4 border-b border-gray-200 dark:border-gray-700">
+      <dt className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{label}</dt>
+      <dd className={`col-span-2 text-sm ${darkMode ? 'text-white' : 'text-gray-800'}`}>{value || '-'}</dd>
+    </div>
+  );
+
+
   if (isLoginOpen) {
+    // ... (Kode modal Login Anda tidak berubah) ...
     return (
       <div className={`min-h-screen ${darkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-blue-100 to-indigo-200'} flex items-center justify-center p-4`}>
         {popup.show && <Popup type={popup.type} message={popup.message} />}
@@ -625,7 +744,9 @@ export default function App() {
       
       {/* Reset Confirmation Modal */}
       {showResetConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        //  👇 PERUBAHAN DI SINI: z-50 diubah menjadi z-[60]
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]">
+          {/* ... (Kode modal Reset Anda tidak berubah) ... */}
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md">
             <div className="p-6">
               <div className="flex items-center gap-3 mb-4">
@@ -656,8 +777,101 @@ export default function App() {
         </div>
       )}
       
+      {/* Modal "Lihat Data Siswa" */}
+      {/* z-50 di sini sudah benar, tidak perlu diubah */}
+      {isViewModalOpen && viewedStudent && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          {/* ... (Kode modal Lihat Data Anda tidak berubah) ... */}
+          <div className={`w-full max-w-3xl max-h-[90vh] overflow-y-auto ${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl`}>
+            {/* Header Modal */}
+            <div className={`sticky top-0 ${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 border-b-2 ${darkMode ? 'border-gray-700' : 'border-gray-200'} flex justify-between items-center`}>
+              <h2 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                Detail Data Siswa
+              </h2>
+              <button
+                onClick={() => setIsViewModalOpen(false)}
+                className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            {/* Konten Modal */}
+            <div className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                <div className="md:col-span-1 flex flex-col items-center text-center">
+                  {viewedStudent.foto_url ? (
+                    <img
+                      src={`${BASE_URL}${viewedStudent.foto_url}`}
+                      alt={viewedStudent.nama}
+                      className="w-40 h-40 rounded-full object-cover border-4 border-indigo-200 shadow-md mb-4"
+                    />
+                  ) : (
+                    <div className={`w-40 h-40 rounded-full ${darkMode ? 'bg-gray-700' : 'bg-gray-200'} flex items-center justify-center mb-4`}>
+                      <Users className={`w-24 h-24 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`} />
+                    </div>
+                  )}
+                  
+                  <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{viewedStudent.nama}</h3>
+                  <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>No. Induk: {viewedStudent.no_induk || '-'}</p>
+                  <span className={`mt-2 px-3 py-1 rounded-full text-xs font-semibold ${
+                    viewedStudent.status === 'Aktif' ? 'bg-green-100 text-green-700' :
+                    viewedStudent.status === 'Lulus' ? 'bg-blue-100 text-blue-700' :
+                    viewedStudent.status === 'Tidak AktIF' ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-red-100 text-red-700'
+                  }`}>
+                    {viewedStudent.status}
+                  </span>
+                </div>
+                
+                <div className="md:col-span-2">
+                  <h4 className={`text-lg font-semibold mb-3 pb-2 border-b ${darkMode ? 'border-gray-700 text-white' : 'border-gray-200 text-gray-800'}`}>
+                    Data Personal
+                  </h4>
+                  <dl>
+                    <DetailItem label="TTL" value={viewedStudent.ttl} />
+                    <DetailItem label="Jenis Kelamin" value={viewedStudent.jenis_kelamin} />
+                    <DetailItem label="NIK" value={viewedStudent.nik} />
+                    <DetailItem label="No HP" value={viewedStudent.no_hp} />
+                    <DetailItem label="Email" value={viewedStudent.email} />
+                    <DetailItem label="Alamat" value={viewedStudent.alamat} />
+                  </dl>
+
+                  <h4 className={`text-lg font-semibold mt-6 mb-3 pb-2 border-b ${darkMode ? 'border-gray-700 text-white' : 'border-gray-200 text-gray-800'}`}>
+                    Data Akademik & Fisik
+                  </h4>
+                  <dl>
+                    <DetailItem label="Kejuruan" value={viewedStudent.kejuruan} />
+                    <DetailItem label="Pendidikan" value={viewedStudent.pendidikan} />
+                    <DetailItem label="Tahun Masuk" value={viewedStudent.tahun_masuk} />
+                    <DetailItem label="Kondisi Fisik" value={viewedStudent.fisik} />
+                    <DetailItem label="TB/BB" value={viewedStudent.tb_bb} />
+                    <DetailItem label="Keterangan" value={viewedStudent.keterangan} />
+                  </dl>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Modal */}
+            <div className={`sticky bottom-0 ${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 border-t-2 ${darkMode ? 'border-gray-700' : 'border-gray-200'} flex justify-end`}>
+              <button
+                onClick={() => setIsViewModalOpen(false)}
+                className={`px-6 py-3 border-2 rounded-xl font-semibold transition ${
+                  darkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
       <div className={`min-h-screen ${darkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-blue-50 to-indigo-100'}`}>
         <nav className={`${darkMode ? 'bg-gray-800 border-b border-gray-700' : 'bg-white'} shadow-lg sticky top-0 z-40`}>
+          {/* ... (Kode Navigasi Anda tidak berubah) ... */}
           <div className="px-8 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -734,6 +948,7 @@ export default function App() {
         <div className="p-8">
           {activeMenu === 'dashboard' && (
             <div className="space-y-6">
+              {/* ... (Kode Dashboard Anda tidak berubah) ... */}
               {/* Stats Cards */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-2xl shadow-lg`}>
@@ -897,7 +1112,7 @@ export default function App() {
                             </td>
                             <td className="px-4 py-3 text-center">
                               <button 
-                                onClick={() => handleEdit(student)}
+                                onClick={() => { setActiveMenu('data'); handleEdit(student); }}
                                 className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
                                 title="Edit"
                               >
@@ -932,6 +1147,7 @@ export default function App() {
 
           {activeMenu === 'data' && (
             <>
+              {/* ... (Kode Data Siswa Anda tidak berubah) ... */}
               <div className={`mb-6 p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-lg space-y-4`}>
                 <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                   <div className="relative w-full md:w-1/3">
@@ -995,7 +1211,7 @@ export default function App() {
                   >
                     <option value="">Semua Status</option>
                     <option value="Aktif">Aktif</option>
-                    <option value="Tidak Aktif">Tidak Aktif</option>
+                    <option value="Tidak Aktif">Tidak Aktif</option> 
                     <option value="Lulus">Lulus</option>
                     <option value="Mengundurkan Diri">Mengundurkan Diri</option>
                   </select>
@@ -1070,21 +1286,23 @@ export default function App() {
                                     {student.status}
                                   </span>
                                 </td>
+                                
                                 <td className="px-6 py-4">
                                   <div className="flex justify-center gap-2">
+                                    <button 
+                                      onClick={() => handleView(student)}
+                                      className="p-2 text-gray-600 hover:bg-gray-50 rounded-lg transition"
+                                      title="Lihat Detail"
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
+                                    
                                     <button 
                                       onClick={() => handleEdit(student)}
                                       className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
                                       title="Edit"
                                     >
                                       <Edit2 className="w-4 h-4" />
-                                    </button>
-                                    <button 
-                                      onClick={() => handleDelete(student.id)}
-                                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
-                                      title="Hapus"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
                                     </button>
                                   </div>
                                 </td>
@@ -1123,67 +1341,132 @@ export default function App() {
             <StatistikPage students={students} darkMode={darkMode} />
           )}
 
+          {/* --- PERUBAHAN 5 (REVISI): Menampilkan Pengaturan & Log Berdampingan --- */}
           {activeMenu === 'pengaturan' && (
-            <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-2xl shadow-lg max-w-2xl mx-auto`}>
-              <h2 className={`text-xl font-bold mb-6 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Pengaturan Sistem</h2>
-              <div className="space-y-6">
-                <div className="flex items-center justify-between p-4 border-2 rounded-xl">
-                  <div>
-                    <h3 className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-800'}`}>Dark Mode</h3>
-                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Ubah tampilan aplikasi</p>
-                  </div>
-                  <button
-                    onClick={toggleDarkMode}
-                    className={`p-3 rounded-lg transition ${darkMode ? 'bg-yellow-400 text-gray-900' : 'bg-gray-200 text-gray-700'}`}
-                  >
-                    {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-                  </button>
-                </div>
-                
-                <div className="p-4 border-2 rounded-xl">
-                  <h3 className={`font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Informasi Akun</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Username</span>
-                      <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{user?.username}</span>
+            // Gunakan grid untuk menampung 2 kolom: Pengaturan & Log Aktivitas
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
+              
+              {/* Kolom 1: Pengaturan Sistem (lebar 2/5) */}
+              <div className="lg:col-span-2">
+                <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-2xl shadow-lg h-full`}>
+                  <h2 className={`text-xl font-bold mb-6 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Pengaturan Sistem</h2>
+                  <div className="space-y-6">
+                    
+                    {/* Dark Mode Toggle (KODE LAMA ANDA) */}
+                    <div className={`flex items-center justify-between p-4 border-2 rounded-xl ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                      <div>
+                        <h3 className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-800'}`}>Dark Mode</h3>
+                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Ubah tampilan aplikasi</p>
+                      </div>
+                      <button
+                        onClick={toggleDarkMode}
+                        className={`p-3 rounded-lg transition ${darkMode ? 'bg-yellow-400 text-gray-900' : 'bg-gray-200 text-gray-700'}`}
+                      >
+                        {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                      </button>
                     </div>
-                    <div className="flex justify-between">
-                      <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Nama Lengkap</span>
-                      <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{user?.nama_lengkap}</span>
+                    
+                    {/* Informasi Akun (KODE LAMA ANDA) */}
+                    <div className={`p-4 border-2 rounded-xl ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                      <h3 className={`font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Informasi Akun</h3>
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Username</span>
+                          <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{user?.username}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Nama Lengkap</span>
+                          <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{user?.nama_lengkap}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Role</span>
+                          <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{user?.role}</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Role</span>
-                      <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{user?.role}</span>
-                    </div>
-                  </div>
-                </div>
 
-                <div className="p-4 border-2 rounded-xl">
-                  <h3 className={`font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Statistik Data</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Total Data Siswa</span>
-                      <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{students.length} siswa</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Jumlah Kejuruan</span>
-                      <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{uniqueKejuruan.length} kejuruan</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Data Tampil per Halaman</span>
-                      <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{itemsPerPage} data</span>
+                    {/* Statistik Data (KODE LAMA ANDA) */}
+                    <div className={`p-4 border-2 rounded-xl ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                      <h3 className={`font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Statistik Data</h3>
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Total Data Siswa</span>
+                          <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{students.length} siswa</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Jumlah Kejuruan</span>
+                          <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{uniqueKejuruan.length} kejuruan</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Data Tampil per Halaman</span>
+                          <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{itemsPerPage} data</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
+
+              {/* Kolom 2: Activity Log (lebar 3/5) (FITUR BARU ANDA) */}
+              <div className="lg:col-span-3">
+                <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-lg`}>
+                  <h2 className={`text-xl font-bold p-6 border-b ${darkMode ? 'text-white border-gray-700' : 'text-gray-800 border-gray-200'}`}>
+                    Riwayat Aktivitas (Activity Log)
+                  </h2>
+                  
+                  <div className="p-6">
+                    {logsLoading ? (
+                      <div className="flex justify-center items-center py-16">
+                        <LoadingSpinner />
+                      </div>
+                    ) : (
+                      <ul className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'} max-h-[70vh] overflow-y-auto`}>
+                        {activityLogs.length > 0 ? (
+                          activityLogs.map(log => (
+                            <li key={log.id} className="py-4">
+                              <div className="flex justify-between items-center mb-1">
+                                <p className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                                  {log.user_name}
+                                </p>
+                                <span className={`text-xs font-medium ${
+                                  log.action === 'CREATE' ? 'bg-green-100 text-green-700' :
+                                  log.action === 'UPDATE' ? 'bg-blue-100 text-blue-700' :
+                                  'bg-red-100 text-red-700'
+                                } px-2 py-0.5 rounded-full`}>
+                                  {log.action}
+                                </span>
+                              </div>
+                              <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>
+                                {log.details}
+                              </p>
+                              <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                                {new Date(log.created_at).toLocaleString('id-ID')}
+                              </p>
+                            </li>
+                          ))
+                        ) : (
+                          <p className={`text-center py-10 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                            Belum ada aktivitas tercatat.
+                          </p>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+
             </div>
           )}
+          {/* --- AKHIR PERUBAHAN REVISI --- */}
+          
         </div>
       </div>
 
-      {/* Modal Form */}
+      {/* Modal Form (Edit/Add) */}
+      {/* z-50 di sini sudah benar, tidak perlu diubah */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          {/* ... (Kode modal Form Anda tidak berubah) ... */}
           <div className={`w-full max-w-4xl max-h-[90vh] overflow-y-auto ${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-xl`}>
             <div className={`sticky top-0 ${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 border-b-2 ${darkMode ? 'border-gray-700' : 'border-gray-200'} flex justify-between items-center`}>
               <h2 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
@@ -1199,6 +1482,7 @@ export default function App() {
 
             <div className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
                 <div>
                   <label className={`block text-sm font-semibold mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                     Nama Lengkap *
@@ -1213,6 +1497,28 @@ export default function App() {
                       darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-200'
                     } ${formErrors.nama ? 'border-red-500' : ''}`}
                   />
+                </div>
+                
+                <div>
+                  <label className={`block text-sm font-semibold mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Foto Profil (Opsional)
+                  </label>
+                  <input
+                    type="file"
+                    name="foto_profil"
+                    accept="image/png, image/jpeg"
+                    onChange={handleFileChange}
+                    className={`w-full px-4 py-3 border-2 rounded-xl focus:border-indigo-500 focus:outline-none ${
+                      darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-200'
+                    } file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold ${
+                      darkMode ? 'file:bg-gray-600 file:text-gray-200 hover:file:bg-gray-500' : 'file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100'
+                    }`}
+                  />
+                  {selectedFile && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      File dipilih: {selectedFile.name}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -1400,25 +1706,41 @@ export default function App() {
                   />
                 </div>
               </div>
+              
+              <div className="flex justify-between items-center gap-3 mt-8 pt-6 border-t-2 border-gray-200 dark:border-gray-700">
+                <div>
+                  {editingStudent && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(editingStudent.id)}
+                      disabled={submitLoading}
+                      className="flex items-center gap-2 bg-red-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-red-700 transition disabled:opacity-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Hapus Siswa
+                    </button>
+                  )}
+                </div>
 
-              <div className="flex justify-end gap-3 mt-8 pt-6 border-t-2 border-gray-200 dark:border-gray-700">
-                <button
-                  onClick={() => { setIsModalOpen(false); resetForm(); }}
-                  disabled={submitLoading}
-                  className={`px-6 py-3 border-2 rounded-xl font-semibold transition disabled:opacity-50 ${
-                    darkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  Batal
-                </button>
-                <button
-                  onClick={handleSubmit}
-                  disabled={submitLoading}
-                  className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {submitLoading ? <LoadingSpinner size="sm" /> : <Save className="w-4 h-4" />}
-                  {submitLoading ? 'Menyimpan...' : (editingStudent ? 'Update Data' : 'Simpan Data')}
-                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setIsModalOpen(false); resetForm(); }}
+                    disabled={submitLoading}
+                    className={`px-6 py-3 border-2 rounded-xl font-semibold transition disabled:opacity-50 ${
+                      darkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={handleSubmit}
+                    disabled={submitLoading}
+                    className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {submitLoading ? <LoadingSpinner size="sm" /> : <Save className="w-4 h-4" />}
+                    {submitLoading ? 'Menyimpan...' : (editingStudent ? 'Update Data' : 'Simpan Data')}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
