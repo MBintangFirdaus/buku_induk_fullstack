@@ -3,10 +3,13 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const http = require('http');
 const { Server } = require('socket.io');
+const path = require('path');
 require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
-const studentRoutes = require('./routes/students'); // <-- Variabel 'studentRoutes' (singular)
+const studentRoutes = require('./routes/students'); 
+const logRoutes = require('./routes/logs'); // <-- BARU
+const { authenticateToken } = require('./middleware/auth.js'); // <-- INI BENAR
 
 const app = express();
 const server = http.createServer(app);
@@ -29,10 +32,18 @@ app.use(cors({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Buat folder 'public/uploads' bisa diakses secara statis
+app.use('/uploads', express.static(path.join(__dirname, 'public/uploads'))); 
+
 // Routes
 app.use('/api/auth', authRoutes);
-// VVV INI BARIS YANG DIPERBAIKI VVV
-app.use('/api/students', studentRoutes); // <--- INI BENAR
+
+// --- PERUBAHAN DI SINI ---
+// Lindungi rute student dan logs dengan middleware
+// Semua permintaan ke /api/students dan /api/logs SEKARANG HARUS punya Token
+app.use('/api/students', authenticateToken, studentRoutes); 
+app.use('/api/logs', authenticateToken, logRoutes); // <-- BARU
+// --- AKHIR PERUBAHAN ---
 
 // Health check
 app.get('/api/health', (req, res) => {
